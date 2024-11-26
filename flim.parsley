@@ -1,0 +1,25 @@
+file: item+
+item: <expression comment>
+expression: <list map literal tagged expanding reference transformer> comment?
+comment: /\/\/.+$/
+list: "[" (value:expression)* "]"
+map: "{" (key:name value:expression)* "}"
+name: /[a-zA-Z][\w_]*/
+integer: /-?\d+/
+eol: /\$/
+float: /-?\d*\.\d+/
+boolean: /true|false/
+string_contents: /[^"]+/
+string: "\"" contents:string_contents "\""
+null: "null"
+
+# The leading exclamation mark in the rule name indicates that this is a transient rule.
+# Transient rules are purely semantic and don't make their way to the final parse tree.
+
+literal: <integer float boolean string null>
+tagged: "#" tag:name expression
+expanding: "*" expression
+reference: "&" name
+transformer: <plain_transformer mapped_transformer>
+plain_transformer: name:name expression:expression
+mapped_transformer: "@" plain_transformer

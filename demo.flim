@@ -1,0 +1,44 @@
+#some_item item {
+	host "0.0.0.0"
+}
+
+#default_creds {
+	username "testuser"
+	auth_method "key"
+}
+
+#my_numbers [2 3 4 -1]
+
+inventory {
+	use_root true
+	items @item [
+		{
+			host "100.100.100.100"
+		}
+		{
+			host "100.100.100.101"
+			timeout 60
+		}
+		{
+			name "A"
+			host from "hostname"
+			port from "base_port"
+		}
+		{
+			name "B"
+			host from "hostname"
+			port add [from "base_port" 1]
+		}
+		{
+			name "C"
+			host from "hostname"
+			port add [from "base_port" 2]
+		}
+		&some_item
+	]
+	credentials {
+		*&default_creds
+		username "realuser"
+	}
+	numbers @square &my_numbers
+}
