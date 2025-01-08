@@ -10,7 +10,7 @@ import (
 
 type ExpressionDefinition struct {
 	Name      string
-	Evaluate  func(values map[string]any, input any, globals map[string]any) (EvaluateResult, error)
+	Evaluate  func(values map[string]any, input MetaString, globals map[string]any) (EvaluateResult, error)
 	Serialize func(values map[string]any, config *SerializerConfig, indentLevel int) (string, error)
 }
 
@@ -19,15 +19,15 @@ type Expression struct {
 	Values     map[string]any
 }
 
-func (e Expression) Evaluate(input any, globals map[string]any) (EvaluateResult, error) {
+func (e Expression) Evaluate(input MetaString, globals map[string]any) (EvaluateResult, error) {
 	if e.Definition.Evaluate == nil {
-		return NoMatch, fmt.Errorf("no Evaluate method defined for expression of type %s", e.Definition.Name)
+		return ErrorResult, fmt.Errorf("no Evaluate method defined for expression of type %s", e.Definition.Name)
 	}
 
 	out, err := e.Definition.Evaluate(e.Values, input, globals)
 
 	if err != nil {
-		return NoMatch, err
+		return ErrorResult, err
 	}
 
 	return out, nil
@@ -53,12 +53,12 @@ func (e Expression) Serialize(config *SerializerConfig, indentLevel int) (string
 
 var Empty = Expression{}
 
-// Evaluate result
+// EvaluateResult
 
 type EvaluateResult interface {
 	Condense() (TreeItem, error)
 	String() string
-	Remaining() string
+	Remaining() MetaString
 }
 
 func Match(result EvaluateResult) bool {
@@ -71,9 +71,15 @@ func Discard(result EvaluateResult) bool {
 	return discard
 }
 
-// No match result
+// NoMatchResult
 
-type NoMatchResult struct{}
+type NoMatchResult struct {
+	remaining MetaString
+}
+
+func NewNoMatchResult(remaining MetaString) NoMatchResult {
+	return NoMatchResult{remaining}
+}
 
 func (r NoMatchResult) String() string {
 	return "NoMatch"
@@ -83,26 +89,26 @@ func (r NoMatchResult) Condense() (TreeItem, error) {
 	return TreeItem{}, errors.New("can't condense NoMatchResult")
 }
 
-func (r NoMatchResult) Remaining() string {
-	return ""
+func (r NoMatchResult) Remaining() MetaString {
+	return r.remaining
 }
 
-var NoMatch = NoMatchResult{}
+var ErrorResult = NoMatchResult{}
 
-// Single result
+// SingleResult
 
 type SingleResult struct {
 	result     EvaluateResult
-	remaining  string
+	remaining  MetaString
 	identifier string
+}
+
+func NewSingleResult(result EvaluateResult, remaining MetaString, identifier string) SingleResult {
+	return SingleResult{result, remaining, identifier}
 }
 
 func (r SingleResult) String() string {
 	return fmt.Sprintf("%s<%s>", r.identifier, r.result)
-}
-
-func NewSingleResult(result EvaluateResult, remaining, identifier string) SingleResult {
-	return SingleResult{result, remaining, identifier}
 }
 
 func (r SingleResult) Condense() (TreeItem, error) {
@@ -115,19 +121,20 @@ func (r SingleResult) Condense() (TreeItem, error) {
 	return TreeItem{r.identifier, val}, nil
 }
 
-func (r SingleResult) Remaining() string {
+func (r SingleResult) Remaining() MetaString {
 	return r.remaining
 }
 
-// Multiple result
+// MultipleResult
 
 type MultipleResult struct {
-	results   []EvaluateResult
-	remaining string
+	results      []EvaluateResult
+	remaining    MetaString
+	nextInSeries *MetaString
 }
 
-func NewMultipleResult(results []EvaluateResult, remaining string) MultipleResult {
-	return MultipleResult{results, remaining}
+func NewMultipleResult(results []EvaluateResult, remaining MetaString, nextInSeries *MetaString) MultipleResult {
+	return MultipleResult{results, remaining, nextInSeries}
 }
 
 func (r MultipleResult) String() string {
@@ -156,40 +163,44 @@ func (r MultipleResult) Condense() (TreeItem, error) {
 	return TreeItem{"Multiple", subVals}, nil
 }
 
-func (r MultipleResult) Remaining() string {
+func (r MultipleResult) Remaining() MetaString {
 	return r.remaining
 }
 
-// String result
-
-type StringResult struct {
-	val       string
-	remaining string
+func (r MultipleResult) Next() *MetaString {
+	return r.nextInSeries
 }
 
-func NewStringResult(val, remaining string) StringResult {
+// StringResult
+
+type StringResult struct {
+	val       MetaString
+	remaining MetaString
+}
+
+func NewStringResult(val, remaining MetaString) StringResult {
 	return StringResult{val, remaining}
 }
 
 func (r StringResult) String() string {
-	return fmt.Sprintf("String<%s>", r.val)
+	return fmt.Sprintf("String<%s>", r.val.Val())
 }
 
 func (r StringResult) Condense() (TreeItem, error) {
 	return TreeItem{"String", r.val}, nil
 }
 
-func (r StringResult) Remaining() string {
+func (r StringResult) Remaining() MetaString {
 	return r.remaining
 }
 
-// Discard result
+// DiscardResult
 
 type DiscardResult struct {
-	remaining string
+	remaining MetaString
 }
 
-func NewDiscardResult(remaining string) DiscardResult {
+func NewDiscardResult(remaining MetaString) DiscardResult {
 	return DiscardResult{remaining}
 }
 
@@ -201,11 +212,11 @@ func (r DiscardResult) Condense() (TreeItem, error) {
 	return TreeItem{}, errors.New("can't condense DiscardResult")
 }
 
-func (r DiscardResult) Remaining() string {
+func (r DiscardResult) Remaining() MetaString {
 	return r.remaining
 }
 
-// Tree item
+// TreeItem
 
 type TreeItem struct {
 	Name string
@@ -214,8 +225,8 @@ type TreeItem struct {
 
 func (t TreeItem) String() string {
 	switch val := t.Val.(type) {
-	case string:
-		return fmt.Sprintf("%#v", val)
+	case MetaString:
+		return val.String()
 	case []TreeItem:
 		subVals := make([]string, len(val))
 

@@ -1,0 +1,7 @@
+foobar [
+	1
+	2
+	// the following line is invalid
+	baz !
+	3
+]

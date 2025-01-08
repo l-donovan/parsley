@@ -7,23 +7,23 @@ item: expression | comment
 
 # Rules are implicitly wrapped in groups, so `rule: content1 content2` is treated as `rule: (content1 content2)`
 # Angle brackets represent a union type
-expression: <list map literal tagged expanding reference transformer>
+expression: <list map literal tagged expanding reference transformer> comment?
 
 # Regular expressions are indicated with forward slashes /like so/
 comment: /\/\/.+\n/
 
 # String literals, denoted by double quotes, are discarded by default
 # An asterisk indicates a ZeroOrMore expression
-list: "[" expression* "]"
+list: "[" item* "]"
 pair: name expression
 map: "{" <pair expanding>* "}"
 name: /[a-zA-Z][\w_]*/
 integer: /-?\d+/
 float: /-?\d*\.\d+/
 boolean: /true|false/
-string: /"[^"]+"/
+string: /"[^"\n]+"/
 null: "null"
-literal: <integer float boolean string null>
+literal: <float integer boolean string null>
 tagged: "#" name expression
 expanding: "*" expression
 reference: "&" name

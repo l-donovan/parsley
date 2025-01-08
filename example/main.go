@@ -1,34 +1,40 @@
 package main
 
 import (
+	_ "embed"
+	"errors"
 	"fmt"
 	"log"
-	"os"
 
 	"github.com/l-donovan/parsley"
 )
 
+//go:embed flim.parsley
+var flimGrammarContents string
+
+// Alternately, try bad.flim
+
+//go:embed demo.flim
+var flimContents string
+
 func main() {
-	parsleyParser := parsley.Parser{}
-	flimGrammar, flimRules, err := parsleyParser.ParseGrammar("example/flim.parsley")
+	flimGrammar, err := parsley.ParseGrammar(flimGrammarContents)
 
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	flimContents, err := os.ReadFile("example/demo.flim")
+	result, err := flimGrammar.Parse(flimContents)
+
+	var parseErr parsley.ParseError
+
+	if errors.As(err, &parseErr) {
+		parseErr.PrintContext(4)
+	}
 
 	if err != nil {
 		log.Fatalln(err)
 	}
-
-	result, err := flimGrammar.Evaluate(string(flimContents), flimRules)
-
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	fmt.Printf("Output: %s\n", result)
 
 	tree, err := result.Condense()
 

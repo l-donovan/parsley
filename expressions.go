@@ -12,20 +12,22 @@ import (
 var (
 	ZeroOrMore = common.ExpressionDefinition{
 		Name: "ZeroOrMore",
-		Evaluate: func(values map[string]any, input any, globals map[string]any) (common.EvaluateResult, error) {
+		Evaluate: func(values map[string]any, input common.MetaString, globals map[string]any) (common.EvaluateResult, error) {
 			expr := values["expr"].(common.Expression)
-			inputStr := input.(string)
+
 			var results []common.EvaluateResult
+			var deepestRemaining common.MetaString
 
 			for {
-				result, err := expr.Evaluate(strings.TrimSpace(inputStr), globals)
+				result, err := expr.Evaluate(input, globals)
 
 				if err != nil {
-					return common.NoMatch, err
+					return common.ErrorResult, err
 				}
 
-				if !common.Match(result) {
-					// Zero matches are permissible, so this still counts as a match
+				// Zero matches are permissible, so this still counts as a match
+				if noMatch, didNotMatch := result.(common.NoMatchResult); didNotMatch {
+					deepestRemaining = noMatch.Remaining()
 					break
 				}
 
@@ -33,30 +35,31 @@ var (
 					results = append(results, result)
 				}
 
-				inputStr = result.Remaining()
+				input = result.Remaining()
 			}
 
-			return common.NewMultipleResult(results, inputStr), nil
+			return common.NewMultipleResult(results, input, &deepestRemaining), nil
 		},
 	}
 
 	OneOrMore = common.ExpressionDefinition{
 		Name: "OneOrMore",
-		Evaluate: func(values map[string]any, input any, globals map[string]any) (common.EvaluateResult, error) {
+		Evaluate: func(values map[string]any, input common.MetaString, globals map[string]any) (common.EvaluateResult, error) {
 			expr := values["expr"].(common.Expression)
-			inputStr := input.(string)
-			var results []common.EvaluateResult
-
 			matchedAtLeastOnce := false
 
+			var results []common.EvaluateResult
+			var deepestRemaining common.MetaString
+
 			for {
-				result, err := expr.Evaluate(strings.TrimSpace(inputStr), globals)
+				result, err := expr.Evaluate(input, globals)
 
 				if err != nil {
-					return common.NoMatch, err
+					return common.ErrorResult, err
 				}
 
-				if !common.Match(result) {
+				if noMatch, didNotMatch := result.(common.NoMatchResult); didNotMatch {
+					deepestRemaining = noMatch.Remaining()
 					break
 				}
 
@@ -66,102 +69,125 @@ var (
 					results = append(results, result)
 				}
 
-				inputStr = result.Remaining()
+				input = result.Remaining()
 			}
 
 			if !matchedAtLeastOnce {
-				return common.NoMatch, nil
+				return common.NewNoMatchResult(deepestRemaining), nil
 			}
 
-			return common.NewMultipleResult(results, inputStr), nil
+			return common.NewMultipleResult(results, input, &deepestRemaining), nil
 		},
 	}
 
 	ZeroOrOne = common.ExpressionDefinition{
 		Name: "ZeroOrOne",
-		Evaluate: func(values map[string]any, input any, globals map[string]any) (common.EvaluateResult, error) {
+		Evaluate: func(values map[string]any, input common.MetaString, globals map[string]any) (common.EvaluateResult, error) {
 			expr := values["expr"].(common.Expression)
-			inputStr := input.(string)
-			var results []common.EvaluateResult
 
-			result, err := expr.Evaluate(strings.TrimSpace(inputStr), globals)
+			var results []common.EvaluateResult
+			var deepestNextInSeries *common.MetaString
+
+			result, err := expr.Evaluate(input, globals)
 
 			if err != nil {
-				return common.NoMatch, err
+				return common.ErrorResult, err
 			}
 
 			if !common.Match(result) {
 				// Zero matches are permissible, so this still counts as a match
-				return common.NewMultipleResult(results, inputStr), nil
+				remaining := result.Remaining()
+				return common.NewMultipleResult(results, input, &remaining), nil
 			}
 
 			if !common.Discard(result) {
 				results = append(results, result)
 			}
 
-			return common.NewMultipleResult(results, result.Remaining()), nil
+			if multipleResult, ok := result.(common.MultipleResult); ok {
+				deepestNextInSeries = multipleResult.Next()
+			}
+
+			return common.NewMultipleResult(results, result.Remaining(), deepestNextInSeries), nil
 		},
 	}
 
 	Or = common.ExpressionDefinition{
 		Name: "Or",
-		Evaluate: func(values map[string]any, input any, globals map[string]any) (common.EvaluateResult, error) {
+		Evaluate: func(values map[string]any, input common.MetaString, globals map[string]any) (common.EvaluateResult, error) {
 			lhs := values["lhs"].(common.Expression)
 			rhs := values["rhs"].(common.Expression)
-			inputStr := input.(string)
+
 			var results []common.EvaluateResult
 
-			lhsResult, err := lhs.Evaluate(strings.TrimSpace(inputStr), globals)
+			lhsResult, err := lhs.Evaluate(input, globals)
 
 			if err != nil {
-				return common.NoMatch, err
+				return common.ErrorResult, err
 			}
 
 			if common.Match(lhsResult) {
-				inputStr = lhsResult.Remaining()
+				input = lhsResult.Remaining()
 				results = append(results, lhsResult)
 			}
 
-			rhsResult, err := rhs.Evaluate(strings.TrimSpace(inputStr), globals)
+			rhsResult, err := rhs.Evaluate(input, globals)
 
 			if err != nil {
-				return common.NoMatch, err
+				return common.ErrorResult, err
 			}
 
 			if common.Match(rhsResult) {
-				inputStr = rhsResult.Remaining()
+				input = rhsResult.Remaining()
 				results = append(results, rhsResult)
 			}
 
 			if !common.Match(lhsResult) && !common.Match(rhsResult) {
-				return common.NoMatch, nil
+				if lhsResult.Remaining().Loc.Pos > rhsResult.Remaining().Loc.Pos {
+					return common.NewNoMatchResult(lhsResult.Remaining()), nil
+				} else {
+					return common.NewNoMatchResult(rhsResult.Remaining()), nil
+				}
 			}
 
-			return common.NewMultipleResult(results, inputStr), nil
+			var deepestNextInSeries *common.MetaString
+
+			for _, result := range results {
+				if multipleResult, ok := result.(common.MultipleResult); ok {
+					if multipleResult.Next() != nil && (deepestNextInSeries == nil || multipleResult.Next().Loc.Pos > deepestNextInSeries.Loc.Pos) {
+						deepestNextInSeries = multipleResult.Next()
+					}
+				}
+			}
+
+			return common.NewMultipleResult(results, input, deepestNextInSeries), nil
 		},
 	}
 
 	ExclusiveOr = common.ExpressionDefinition{
 		Name: "ExclusiveOr",
-		Evaluate: func(values map[string]any, input any, globals map[string]any) (common.EvaluateResult, error) {
+		Evaluate: func(values map[string]any, input common.MetaString, globals map[string]any) (common.EvaluateResult, error) {
 			lhs := values["lhs"].(common.Expression)
 			rhs := values["rhs"].(common.Expression)
-			inputStr := input.(string)
 
-			lhsResult, err := lhs.Evaluate(strings.TrimSpace(inputStr), globals)
+			lhsResult, err := lhs.Evaluate(input, globals)
 
 			if err != nil {
-				return common.NoMatch, err
+				return common.ErrorResult, err
 			}
 
-			rhsResult, err := rhs.Evaluate(strings.TrimSpace(inputStr), globals)
+			rhsResult, err := rhs.Evaluate(input, globals)
 
 			if err != nil {
-				return common.NoMatch, err
+				return common.ErrorResult, err
 			}
 
 			if common.Match(lhsResult) == common.Match(rhsResult) {
-				return common.NoMatch, nil
+				if lhsResult.Remaining().Loc.Pos > rhsResult.Remaining().Loc.Pos {
+					return common.NewNoMatchResult(lhsResult.Remaining()), nil
+				} else {
+					return common.NewNoMatchResult(rhsResult.Remaining()), nil
+				}
 			} else if common.Match(lhsResult) {
 				return lhsResult, nil
 			} else {
@@ -172,59 +198,62 @@ var (
 
 	Union = common.ExpressionDefinition{
 		Name: "Union",
-		Evaluate: func(values map[string]any, input any, globals map[string]any) (common.EvaluateResult, error) {
+		Evaluate: func(values map[string]any, input common.MetaString, globals map[string]any) (common.EvaluateResult, error) {
 			unionItems := values["unionItems"].([]common.Expression)
-			inputStr := input.(string)
+
+			var deepestRemaining common.MetaString
 
 			for _, unionItem := range unionItems {
-				result, err := unionItem.Evaluate(strings.TrimSpace(inputStr), globals)
+				result, err := unionItem.Evaluate(input, globals)
 
 				if err != nil {
-					return common.NoMatch, err
+					return common.ErrorResult, err
 				}
 
-				if common.Match(result) {
+				if noMatch, didNotMatch := result.(common.NoMatchResult); didNotMatch {
+					if noMatch.Remaining().Loc.Pos > deepestRemaining.Loc.Pos {
+						deepestRemaining = noMatch.Remaining()
+					}
+				} else {
 					// Unions are transparent
 					return result, nil
 				}
 			}
 
-			return common.NoMatch, nil
+			return common.NewNoMatchResult(deepestRemaining), nil
 		},
 	}
 
 	Rule = common.ExpressionDefinition{
 		Name: "Rule",
-		Evaluate: func(values map[string]any, input any, globals map[string]any) (common.EvaluateResult, error) {
+		Evaluate: func(values map[string]any, input common.MetaString, globals map[string]any) (common.EvaluateResult, error) {
 			contents := values["contents"].([]common.Expression)
 			groupExpr := common.Expression{Definition: &Group, Values: map[string]any{"groupItems": contents}}
+
 			return groupExpr.Evaluate(input, globals)
 		},
 	}
 
 	RuleRef = common.ExpressionDefinition{
 		Name: "RuleRef",
-		Evaluate: func(values map[string]any, input any, globals map[string]any) (common.EvaluateResult, error) {
+		Evaluate: func(values map[string]any, input common.MetaString, globals map[string]any) (common.EvaluateResult, error) {
 			ref := values["ref"].(string)
-			inputStr := input.(string)
 
-			// Get the rule
 			groupItems, found := globals[ref]
 
 			if !found {
-				return common.NoMatch, fmt.Errorf("could not find rule with name %s", ref)
+				return common.ErrorResult, fmt.Errorf("could not find rule with name %s", ref)
 			}
 
 			groupExpr := common.Expression{Definition: &Group, Values: map[string]any{"groupItems": groupItems}}
-
-			result, err := groupExpr.Evaluate(strings.TrimSpace(inputStr), globals)
+			result, err := groupExpr.Evaluate(input, globals)
 
 			if err != nil {
-				return common.NoMatch, err
+				return common.ErrorResult, err
 			}
 
 			if !common.Match(result) {
-				return common.NoMatch, nil
+				return result, nil
 			}
 
 			return common.NewSingleResult(result, result.Remaining(), ref), nil
@@ -233,31 +262,25 @@ var (
 
 	RegularExpression = common.ExpressionDefinition{
 		Name: "RegularExpression",
-		Evaluate: func(values map[string]any, input any, globals map[string]any) (common.EvaluateResult, error) {
-			val := values["val"].(string)
-			inputStr := input.(string)
-
-			expr, err := regexp.Compile(`\s*(` + val + ")")
-
-			if err != nil {
-				return common.NoMatch, err
-			}
-
-			idx := expr.FindStringSubmatchIndex(inputStr)
+		Evaluate: func(values map[string]any, input common.MetaString, globals map[string]any) (common.EvaluateResult, error) {
+			expr := values["val"].(*regexp.Regexp)
+			idx := expr.FindStringSubmatchIndex(input.Val())
 
 			if idx == nil || idx[0] > 0 {
-				return common.NoMatch, nil
+				return common.NewNoMatchResult(input), nil
 			}
 
-			return common.NewStringResult(inputStr[idx[2]:idx[3]], inputStr[idx[3]:]), nil
+			result := input.FromPosRange(idx[2], idx[3])
+			remaining := input.FromStartPos(idx[3])
+
+			return common.NewStringResult(result, remaining), nil
 		},
 	}
 
 	File = common.ExpressionDefinition{
 		Name: "File",
-		Evaluate: func(values map[string]any, input any, globals map[string]any) (common.EvaluateResult, error) {
+		Evaluate: func(values map[string]any, input common.MetaString, globals map[string]any) (common.EvaluateResult, error) {
 			rules := values["rules"].([]common.Expression)
-			inputStr := input.(string)
 
 			for _, rule := range rules {
 				ruleName := rule.Values["name"].(string)
@@ -266,60 +289,69 @@ var (
 					continue
 				}
 
-				result, err := rule.Evaluate(strings.TrimSpace(inputStr), globals)
-
-				if err != nil {
-					return common.NoMatch, err
+				if result, err := rule.Evaluate(input, globals); err != nil {
+					return common.ErrorResult, err
+				} else {
+					return result, nil
 				}
-
-				return result, nil
 			}
 
-			return common.NoMatch, errors.New("no top-level rule found")
+			return common.ErrorResult, errors.New("no top-level rule found")
 		},
 	}
 
 	Group = common.ExpressionDefinition{
 		Name: "Group",
-		Evaluate: func(values map[string]any, input any, globals map[string]any) (common.EvaluateResult, error) {
+		Evaluate: func(values map[string]any, input common.MetaString, globals map[string]any) (common.EvaluateResult, error) {
 			groupItems := values["groupItems"].([]common.Expression)
+
 			var results []common.EvaluateResult
-			inputStr := input.(string)
+			var deepestNextInSeries *common.MetaString
 
 			for _, groupItem := range groupItems {
-				result, err := groupItem.Evaluate(strings.TrimSpace(inputStr), globals)
+				result, err := groupItem.Evaluate(input, globals)
 
 				if err != nil {
-					return common.NoMatch, err
+					return common.ErrorResult, err
 				}
 
 				if !common.Match(result) {
-					return common.NoMatch, nil
+					if deepestNextInSeries == nil || result.Remaining().Loc.Pos > deepestNextInSeries.Loc.Pos {
+						return result, nil
+					}
+
+					return common.NewNoMatchResult(*deepestNextInSeries), nil
+				}
+
+				if multipleResult, ok := result.(common.MultipleResult); ok {
+					if multipleResult.Next() != nil && (deepestNextInSeries == nil || multipleResult.Next().Loc.Pos > deepestNextInSeries.Loc.Pos) {
+						deepestNextInSeries = multipleResult.Next()
+					}
 				}
 
 				if !common.Discard(result) {
 					results = append(results, result)
 				}
 
-				inputStr = result.Remaining()
+				input = result.Remaining()
 			}
 
-			return common.NewMultipleResult(results, inputStr), nil
+			return common.NewMultipleResult(results, input, deepestNextInSeries), nil
 		},
 	}
 
 	StringLiteral = common.ExpressionDefinition{
 		Name: "StringLiteral",
-		Evaluate: func(values map[string]any, input any, globals map[string]any) (common.EvaluateResult, error) {
+		Evaluate: func(values map[string]any, input common.MetaString, globals map[string]any) (common.EvaluateResult, error) {
 			val := values["val"].(string)
-			inputStr := input.(string)
+			trimmedInput := input.FromFirstNotMatching(" \t\f\v\r\n")
 
 			// The input starts with our string literal
-			if strings.Index(inputStr, val) == 0 {
-				return common.NewDiscardResult(inputStr[len(val):]), nil
+			if strings.Index(trimmedInput.Val(), val) == 0 {
+				return common.NewDiscardResult(trimmedInput.FromStartPos(len(val))), nil
 			}
 
-			return common.NoMatch, nil
+			return common.NewNoMatchResult(trimmedInput), nil
 		},
 	}
 )
