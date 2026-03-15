@@ -256,7 +256,7 @@ var (
 				return result, nil
 			}
 
-			return common.NewSingleResult(result, result.Remaining(), ref), nil
+			return common.NewRuleResult(result.(common.MultipleResult), result.Remaining(), ref), nil
 		},
 	}
 
@@ -289,11 +289,13 @@ var (
 					continue
 				}
 
-				if result, err := rule.Evaluate(input, globals); err != nil {
+				result, err := rule.Evaluate(input, globals)
+
+				if err != nil {
 					return common.ErrorResult, err
-				} else {
-					return result, nil
 				}
+
+				return common.NewRuleResult(result.(common.MultipleResult), result.Remaining(), ruleName), nil
 			}
 
 			return common.ErrorResult, errors.New("no top-level rule found")

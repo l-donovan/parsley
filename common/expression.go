@@ -6,6 +6,13 @@ import (
 	"strings"
 )
 
+// TreeItem
+
+type TreeItem interface {
+	fmt.Stringer
+	Val() any
+}
+
 // Expression
 
 type ExpressionDefinition struct {
@@ -86,7 +93,7 @@ func (r NoMatchResult) String() string {
 }
 
 func (r NoMatchResult) Condense() (TreeItem, error) {
-	return TreeItem{}, errors.New("can't condense NoMatchResult")
+	return nil, errors.New("can't condense NoMatchResult")
 }
 
 func (r NoMatchResult) Remaining() MetaString {
@@ -95,34 +102,47 @@ func (r NoMatchResult) Remaining() MetaString {
 
 var ErrorResult = NoMatchResult{}
 
-// SingleResult
-
-type SingleResult struct {
-	result     EvaluateResult
+// RuleResult is the core type for defined rules.
+type RuleResult struct {
+	result     MultipleResult
 	remaining  MetaString
 	identifier string
 }
 
-func NewSingleResult(result EvaluateResult, remaining MetaString, identifier string) SingleResult {
-	return SingleResult{result, remaining, identifier}
+func NewRuleResult(result MultipleResult, remaining MetaString, identifier string) RuleResult {
+	return RuleResult{result, remaining, identifier}
 }
 
-func (r SingleResult) String() string {
+func (r RuleResult) String() string {
 	return fmt.Sprintf("%s<%s>", r.identifier, r.result)
 }
 
-func (r SingleResult) Condense() (TreeItem, error) {
+func (r RuleResult) Condense() (TreeItem, error) {
 	val, err := r.result.Condense()
 
 	if err != nil {
-		return TreeItem{}, err
+		return nil, err
 	}
 
-	return TreeItem{r.identifier, val}, nil
+	return RuleTreeItem{r.identifier, val.(MultipleTreeItem)}, nil
 }
 
-func (r SingleResult) Remaining() MetaString {
+func (r RuleResult) Remaining() MetaString {
 	return r.remaining
+}
+
+type RuleTreeItem struct {
+	rule   string
+	result MultipleTreeItem
+}
+
+func (t RuleTreeItem) Val() any {
+	// TODO: I dunno.
+	return t
+}
+
+func (t RuleTreeItem) String() string {
+	return fmt.Sprintf("%s<%s>", t.rule, t.result)
 }
 
 // MultipleResult
@@ -154,13 +174,13 @@ func (r MultipleResult) Condense() (TreeItem, error) {
 		subTreeItem, err := subResult.Condense()
 
 		if err != nil {
-			return TreeItem{}, err
+			return nil, err
 		}
 
 		subVals[i] = subTreeItem
 	}
 
-	return TreeItem{"Multiple", subVals}, nil
+	return MultipleTreeItem(subVals), nil
 }
 
 func (r MultipleResult) Remaining() MetaString {
@@ -169,6 +189,22 @@ func (r MultipleResult) Remaining() MetaString {
 
 func (r MultipleResult) Next() *MetaString {
 	return r.nextInSeries
+}
+
+type MultipleTreeItem []TreeItem
+
+func (t MultipleTreeItem) Val() any {
+	return t
+}
+
+func (t MultipleTreeItem) String() string {
+	subVals := make([]string, len(t))
+
+	for i, subVal := range t {
+		subVals[i] = subVal.String()
+	}
+
+	return fmt.Sprintf("[%s]", strings.Join(subVals, ", "))
 }
 
 // StringResult
@@ -187,11 +223,23 @@ func (r StringResult) String() string {
 }
 
 func (r StringResult) Condense() (TreeItem, error) {
-	return TreeItem{"String", r.val}, nil
+	return StringTreeItem{r.val.contents}, nil
 }
 
 func (r StringResult) Remaining() MetaString {
 	return r.remaining
+}
+
+type StringTreeItem struct {
+	val string
+}
+
+func (t StringTreeItem) Val() any {
+	return t.val
+}
+
+func (t StringTreeItem) String() string {
+	return fmt.Sprintf("String<%s>", t.val)
 }
 
 // DiscardResult
@@ -209,33 +257,9 @@ func (r DiscardResult) String() string {
 }
 
 func (r DiscardResult) Condense() (TreeItem, error) {
-	return TreeItem{}, errors.New("can't condense DiscardResult")
+	return nil, errors.New("can't condense DiscardResult")
 }
 
 func (r DiscardResult) Remaining() MetaString {
 	return r.remaining
-}
-
-// TreeItem
-
-type TreeItem struct {
-	Name string
-	Val  any
-}
-
-func (t TreeItem) String() string {
-	switch val := t.Val.(type) {
-	case MetaString:
-		return val.String()
-	case []TreeItem:
-		subVals := make([]string, len(val))
-
-		for i, subVal := range val {
-			subVals[i] = subVal.String()
-		}
-
-		return fmt.Sprintf("[%s]", strings.Join(subVals, ", "))
-	default:
-		return fmt.Sprintf("%s%s", t.Name, t.Val)
-	}
 }

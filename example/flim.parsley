@@ -16,7 +16,7 @@ comment: /\/\/.+\n/
 # An asterisk indicates a ZeroOrMore expression
 list: "[" item* "]"
 pair: name expression
-map: "{" <pair expanding>* "}"
+map: "{" <pair expanding comment>* "}"
 name: /[a-zA-Z][\w_]*/
 integer: /-?\d+/
 float: /-?\d*\.\d+/
